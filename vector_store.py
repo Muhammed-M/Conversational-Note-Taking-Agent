@@ -100,6 +100,14 @@ class VectorNoteStore:
         self.vector_dim = vector_dim
         self.embedder = SimpleEmbeddingProvider(vector_dim=self.vector_dim)
 
+        # Auto-detect actual vector dimension from embedder
+        try:
+            sample_vector = self.embedder.embed_text("dimension_check")
+            if sample_vector and len(sample_vector) > 0:
+                self.vector_dim = len(sample_vector)
+        except Exception:
+            pass
+
         if not QDRANT_AVAILABLE:
             print("[Warning] qdrant-client not installed. Vector search disabled.")
             self.client = None
@@ -116,13 +124,29 @@ class VectorNoteStore:
 
         self._ensure_collection()
 
-
     def _ensure_collection(self) -> None:
         if not self.client:
             return
 
         try:
             collections = [c.name for c in self.client.get_collections().collections]
+            if self.COLLECTION_NAME in collections:
+                # Inspect existing collection vector dimension
+                collection_info = self.client.get_collection(self.COLLECTION_NAME)
+                current_size = None
+                if hasattr(collection_info.config.params, "vectors"):
+                    v_config = collection_info.config.params.vectors
+                    if hasattr(v_config, "size"):
+                        current_size = v_config.size
+
+                if current_size and current_size != self.vector_dim:
+                    print(
+                        f"[Info] Recreating Qdrant collection '{self.COLLECTION_NAME}' "
+                        f"(dimension change: {current_size} -> {self.vector_dim})"
+                    )
+                    self.client.delete_collection(self.COLLECTION_NAME)
+                    collections.remove(self.COLLECTION_NAME)
+
             if self.COLLECTION_NAME not in collections:
                 self.client.create_collection(
                     collection_name=self.COLLECTION_NAME,
@@ -133,6 +157,7 @@ class VectorNoteStore:
                 )
         except Exception as e:
             print(f"[Warning] Failed to initialize Qdrant collection: {e}")
+
 
     def upsert_note(self, note: Note) -> bool:
         """
