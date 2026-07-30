@@ -23,31 +23,36 @@ except ImportError:
 
 class SimpleEmbeddingProvider:
     """
-    Embedding Provider with API embedding support (Gemini) and
+    Embedding Provider with API embedding support (LangChain Google GenAI) and
     deterministic offline fallback.
     """
 
     def __init__(self, vector_dim: int = 128):
         self.vector_dim = vector_dim
         self.api_key = os.environ.get("GEMINI_API_KEY")
+        self.model_name = os.environ.get("GEMINI_EMBEDDING_MODEL", "models/embedding-001")
+        self._embedder_inst = None
+
+        if self.api_key:
+            try:
+                from langchain_google_genai import GoogleGenerativeAIEmbeddings
+                self._embedder_inst = GoogleGenerativeAIEmbeddings(
+                    model=self.model_name,
+                    google_api_key=self.api_key,
+                )
+            except Exception as e:
+                print(f"[Warning] Failed to initialize GoogleGenerativeAIEmbeddings: {e}")
 
     def embed_text(self, text: str) -> list[float]:
         """
-        Generate embedding vector for text. Uses Gemini API if configured,
+        Generate embedding vector for text. Uses LangChain Google GenAI embeddings if configured,
         otherwise generates a normalized term-frequency feature vector.
         """
-        if self.api_key:
+        if self._embedder_inst:
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                res = genai.embed_content(
-                    model="models/text-embedding-004",
-                    content=text,
-                    task_type="retrieval_document",
-                )
-                embedding = res.get("embedding", [])
-                if embedding:
-                    return embedding
+                vec = self._embedder_inst.embed_query(text)
+                if vec:
+                    return vec
             except Exception as e:
                 print(f"[Warning] Remote embedding generation failed, using local fallback: {e}")
 
@@ -74,6 +79,7 @@ class SimpleEmbeddingProvider:
             vector = [val / norm for val in vector]
 
         return vector
+
 
 
 class VectorNoteStore:
