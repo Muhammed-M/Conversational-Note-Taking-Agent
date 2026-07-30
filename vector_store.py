@@ -207,13 +207,18 @@ class VectorNoteStore:
             print(f"[Warning] Failed to delete vector for note {note_id}: {e}")
             return False
 
-    def search(self, query: str, top_k: int = 5) -> list[str]:
+    def search(self, query: str, top_k: int = 5, score_threshold: Optional[float] = None) -> list[str]:
         """
         Search vector index by natural language query.
-        Returns list of matching note_ids ranked by similarity score.
+        Returns list of matching note_ids ranked by similarity score,
+        filtering out low-relevance matches below score_threshold.
         """
         if not self.client or not query.strip():
             return []
+
+        if score_threshold is None:
+            # Gemini API dense embeddings use 0.30 threshold; offline sparse fallback uses 0.10 threshold
+            score_threshold = 0.30 if self.embedder.api_key else 0.10
 
         try:
             query_vector = self.embedder.embed_text(query)
@@ -223,6 +228,7 @@ class VectorNoteStore:
                     collection_name=self.COLLECTION_NAME,
                     query=query_vector,
                     limit=top_k,
+                    score_threshold=score_threshold,
                 )
                 search_results = response.points
             elif hasattr(self.client, "search"):
@@ -230,6 +236,7 @@ class VectorNoteStore:
                     collection_name=self.COLLECTION_NAME,
                     query_vector=query_vector,
                     limit=top_k,
+                    score_threshold=score_threshold,
                 )
             else:
                 return []
@@ -237,9 +244,11 @@ class VectorNoteStore:
             return [
                 res.payload["note_id"]
                 for res in search_results
-                if res.payload and "note_id" in res.payload
+                if res.payload and "note_id" in res.payload and getattr(res, "score", 1.0) >= score_threshold
             ]
         except Exception as e:
             print(f"[Warning] Qdrant vector search failed, falling back: {e}")
             return []
+
+
 

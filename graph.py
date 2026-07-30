@@ -211,17 +211,34 @@ class NoteAgentGraph:
             candidates = state.get("search_candidates", [])
             pending = state.get("pending_action", {})
 
-            # Try parsing integer pick (e.g., "1" or "option 2")
             picked_idx = None
-            digits = re.findall(r"\d+", msg_clean)
-            if digits:
-                idx = int(digits[0]) - 1
-                if 0 <= idx < len(candidates):
+            # 1. Match full ID or short 8-char ID (e.g. "c3e21705" or "ID: c3e21705")
+            for idx, c in enumerate(candidates):
+                cid = c.get("id", "").lower()
+                cshort = cid[:8]
+                if cshort in msg_clean or cid in msg_clean:
                     picked_idx = idx
+                    break
+
+            # 2. Match small option number (e.g. "1", "2", "option 1")
+            if picked_idx is None:
+                small_digits = [int(d) for d in re.findall(r"\b\d+\b", msg_clean) if len(d) <= 2]
+                if small_digits:
+                    idx = small_digits[0] - 1
+                    if 0 <= idx < len(candidates):
+                        picked_idx = idx
+
+            # 3. Match candidate title snippet
+            if picked_idx is None:
+                for idx, c in enumerate(candidates):
+                    title_clean = c.get("title", "").lower()
+                    if title_clean and (title_clean in msg_clean or msg_clean in title_clean):
+                        picked_idx = idx
+                        break
 
             if picked_idx is None:
                 state["final_response"] = (
-                    f"Invalid selection. Please reply with a number between 1 and {len(candidates)}, or 'cancel'."
+                    f"Invalid selection. Please reply with the note number (1-{len(candidates)}), short ID, or 'cancel'."
                 )
                 return state
 
@@ -263,11 +280,22 @@ class NoteAgentGraph:
                     return state
 
                 elif intent == "update":
+                    existing = self.store.get_note_by_id(note_id)
+                    new_title = updates.get("title")
+                    new_body = updates.get("body")
+                    new_tags = updates.get("tags")
+
+                    # If no explicit body was passed, check query text instructions
+                    if not new_body and existing:
+                        query_text = updates.get("query") or ""
+                        if query_text:
+                            new_body = f"{existing.body}\n[Update]: {query_text}"
+
                     updated = self.store.update_note(
                         note_id=note_id,
-                        title=updates.get("title"),
-                        body=updates.get("body"),
-                        tags=updates.get("tags"),
+                        title=new_title,
+                        body=new_body,
+                        tags=new_tags,
                     )
                     state["mode"] = "IDLE"
                     state["pending_action"] = None
@@ -281,6 +309,7 @@ class NoteAgentGraph:
             else:
                 state["final_response"] = "Please confirm with 'yes' or 'no', or type 'cancel'."
                 return state
+
 
         state["mode"] = "IDLE"
         return state
