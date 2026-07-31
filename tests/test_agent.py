@@ -17,6 +17,7 @@ import shutil
 import tempfile
 import pytest
 from agent import Agent
+from schemas import IntentResult
 from state import create_initial_state
 from store import NoteStore
 from models import Note
@@ -62,8 +63,14 @@ def test_save_flow(app):
     agent, store = app
     state = create_initial_state()
 
-    args = {"title": "Team Standup", "body": "Standup is every Tuesday at 10am.", "tags": ["meetings"]}
-    state = agent._save_note(args, state)
+    # Build an IntentResult object (the shape pick_intent() returns)
+    result = IntentResult(
+        intent="save",
+        title="Team Standup",
+        body="Standup is every Tuesday at 10am.",
+        tags=["meetings"],
+    )
+    state = agent._save_note(result, state)
 
     # The response should confirm saving
     assert "Saved" in state["final_response"] or "✅" in state["final_response"]
@@ -85,7 +92,7 @@ def test_keyword_search_flow(app):
     store.add_note(title="Python Tips", body="Use list comprehensions in Python", tags=["python"])
 
     state = create_initial_state()
-    state = agent._search_by_keyword({"keyword": "Python"}, state)
+    state = agent._search_by_keyword(IntentResult(intent="search_keyword", keyword="Python"), state)
 
     assert "Python Tips" in state["final_response"]
 
@@ -98,7 +105,7 @@ def test_tag_search_flow(app):
     store.add_note(title="Meeting Notes", body="Q3 roadmap discussed", tags=["meetings", "work"])
 
     state = create_initial_state()
-    state = agent._search_by_tags({"tags": ["meetings"]}, state)
+    state = agent._search_by_tags(IntentResult(intent="search_tags", tags=["meetings"]), state)
 
     assert "Meeting Notes" in state["final_response"]
 

@@ -18,6 +18,7 @@ For update and delete, we use a "human-in-the-loop" pattern:
 import config
 import llm
 from models import Note
+from schemas import IntentResult, RewrittenNote
 from state import AgentState
 from store import NoteStore
 from vector_store import VectorStore
@@ -64,29 +65,30 @@ class Agent:
     def _handle_new_message(self, user_message: str, state: AgentState) -> AgentState:
         """
         Ask the LLM what the user wants, then call the correct handler.
-        The LLM returns an intent string and a dict of args.
+
+        llm.pick_intent() returns a typed IntentResult object (defined in schemas.py).
+        We read result.intent to decide which handler to call,
+        and pass the whole result object so each handler can access its fields directly.
         """
-        parsed = llm.pick_intent(user_message, state["messages"])
-        intent = parsed.get("intent", "unknown")
-        args = parsed.get("args", {})
+        result = llm.pick_intent(user_message, state["messages"])
 
-        if intent == "save":
-            return self._save_note(args, state)
+        if result.intent == "save":
+            return self._save_note(result, state)
 
-        elif intent == "search_keyword":
-            return self._search_by_keyword(args, state)
+        elif result.intent == "search_keyword":
+            return self._search_by_keyword(result, state)
 
-        elif intent == "search_tags":
-            return self._search_by_tags(args, state)
+        elif result.intent == "search_tags":
+            return self._search_by_tags(result, state)
 
-        elif intent == "search_semantic":
-            return self._search_semantic(args, state)
+        elif result.intent == "search_semantic":
+            return self._search_semantic(result, state)
 
-        elif intent == "update":
-            return self._start_update(args, user_message, state)
+        elif result.intent == "update":
+            return self._start_update(result, user_message, state)
 
-        elif intent == "delete":
-            return self._start_delete(args, state)
+        elif result.intent == "delete":
+            return self._start_delete(result, state)
 
         else:
             state["final_response"] = (
@@ -98,20 +100,20 @@ class Agent:
     # Flow 1 — Save a new note
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _save_note(self, args: dict, state: AgentState) -> AgentState:
+    def _save_note(self, result: IntentResult, state: AgentState) -> AgentState:
         """
         Save a new note to both stores.
 
         The LLM already extracted title, body, and tags in pick_intent().
-        We just take those values and save them.
+        They are available directly as typed attributes on the IntentResult object.
 
         Steps:
           1. Save to SQLite (gets an auto-generated ID)
           2. Embed and save to Qdrant (for future semantic search)
         """
-        title = args.get("title", "").strip()
-        body = args.get("body", "").strip()
-        tags = args.get("tags", [])
+        title = (result.title or "").strip()
+        body = (result.body or "").strip()
+        tags = result.tags or []
 
         if not title or not body:
             state["final_response"] = "Please give me more detail about the note you'd like to save."
@@ -134,13 +136,13 @@ class Agent:
     # Flow 2 — Search notes (3 tools, LLM picks which one)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _search_by_keyword(self, args: dict, state: AgentState) -> AgentState:
+    def _search_by_keyword(self, result: IntentResult, state: AgentState) -> AgentState:
         """
         Search SQLite for notes containing a specific keyword.
         Used when the user mentions a specific word to find.
         Example: "find notes with the word Python"
         """
-        keyword = args.get("keyword", "").strip()
+        keyword = (result.keyword or "").strip()
         if not keyword:
             state["final_response"] = "Please tell me the keyword you'd like to search for."
             return state
@@ -148,13 +150,13 @@ class Agent:
         notes = self.store.search_by_keyword(keyword, top_n=config.TOP_K_KEYWORD)
         return self._format_search_results(notes, f"keyword '{keyword}'", state)
 
-    def _search_by_tags(self, args: dict, state: AgentState) -> AgentState:
+    def _search_by_tags(self, result: IntentResult, state: AgentState) -> AgentState:
         """
         Search SQLite for notes that have specific tags.
         Used when the user filters by category.
         Example: "show me notes tagged work"
         """
-        tags = args.get("tags", [])
+        tags = result.tags or []
         if not tags:
             state["final_response"] = "Please tell me which tags to search by."
             return state
@@ -162,7 +164,7 @@ class Agent:
         notes = self.store.search_by_tags(tags, top_n=config.TOP_K_TAG)
         return self._format_search_results(notes, f"tags: {', '.join(tags)}", state)
 
-    def _search_semantic(self, args: dict, state: AgentState) -> AgentState:
+    def _search_semantic(self, result: IntentResult, state: AgentState) -> AgentState:
         """
         Semantic search using Qdrant vector similarity.
         Used for natural language questions.
@@ -173,7 +175,7 @@ class Agent:
           2. Search Qdrant for similar vectors → get a list of note IDs
           3. Fetch full note data from SQLite using those IDs
         """
-        query = args.get("query", "").strip()
+        query = (result.query or "").strip()
         if not query:
             state["final_response"] = "Please describe what you're looking for."
             return state
@@ -208,18 +210,18 @@ class Agent:
     # Flow 3 — Update a note (with human-in-the-loop)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _start_update(self, args: dict, user_message: str, state: AgentState) -> AgentState:
+    def _start_update(self, result: IntentResult, user_message: str, state: AgentState) -> AgentState:
         """
         Start the update flow: find matching notes and ask the user to pick one.
-        We save the original user_message because it contains the update instruction
+        We save the original user_message because it contains the full update instruction
         (e.g. "change the standup to Wednesdays") — we'll need it later when
         we call the LLM to actually rewrite the note.
         """
-        query = args.get("query", user_message)
+        query = result.query or user_message   # result.query has what to search for
         candidates = self._find_candidates(query)
 
         if not candidates:
-            state["final_response"] = f"No notes found matching your request. Nothing to update."
+            state["final_response"] = "No notes found matching your request. Nothing to update."
             return state
 
         # Store the intent and the original instruction for later use
@@ -234,9 +236,9 @@ class Agent:
     # Flow 4 — Delete a note (with human-in-the-loop)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _start_delete(self, args: dict, state: AgentState) -> AgentState:
+    def _start_delete(self, result: IntentResult, state: AgentState) -> AgentState:
         """Start the delete flow: find matching notes and ask the user to pick one."""
-        query = args.get("query", "")
+        query = result.query or ""   # result.query describes which note to delete
         candidates = self._find_candidates(query)
 
         if not candidates:
@@ -306,16 +308,17 @@ class Agent:
                 )
 
             else:  # update
-                # Call the LLM now to preview what the updated note will look like
+                # Call the LLM to preview what the updated note will look like
                 user_instruction = state["pending_action"].get("user_instruction", "")
-                updated_fields = llm.rewrite_note(note, user_instruction)
-                state["pending_action"]["updated_fields"] = updated_fields  # save for when user confirms
+                rewritten = llm.rewrite_note(note, user_instruction)  # returns RewrittenNote
+                # Store as dict so it can live in the state (AgentState uses plain dicts)
+                state["pending_action"]["updated_fields"] = rewritten.model_dump()
 
                 state["final_response"] = (
                     f"Here is how '{note.title}' will look after the update:\n\n"
-                    f"  Title : {updated_fields.get('title', note.title)}\n"
-                    f"  Body  : {updated_fields.get('body', note.body)}\n"
-                    f"  Tags  : {', '.join(updated_fields.get('tags', note.tags))}\n\n"
+                    f"  Title : {rewritten.title}\n"
+                    f"  Body  : {rewritten.body}\n"
+                    f"  Tags  : {', '.join(rewritten.tags)}\n\n"
                     f"Confirm update? (yes / no)"
                 )
 
@@ -390,14 +393,15 @@ class Agent:
         else:  # update
             # Now that we know which note the user picked, ask the LLM to preview the update
             user_instruction = pending.get("user_instruction", "")
-            updated_fields = llm.rewrite_note(note, user_instruction)
-            state["pending_action"]["updated_fields"] = updated_fields
+            rewritten = llm.rewrite_note(note, user_instruction)  # returns RewrittenNote
+            # Store as dict so it can live in the state (AgentState uses plain dicts)
+            state["pending_action"]["updated_fields"] = rewritten.model_dump()
 
             state["final_response"] = (
                 f"Here is how '{note.title}' will look after the update:\n\n"
-                f"  Title : {updated_fields.get('title', note.title)}\n"
-                f"  Body  : {updated_fields.get('body', note.body)}\n"
-                f"  Tags  : {', '.join(updated_fields.get('tags', note.tags))}\n\n"
+                f"  Title : {rewritten.title}\n"
+                f"  Body  : {rewritten.body}\n"
+                f"  Tags  : {', '.join(rewritten.tags)}\n\n"
                 f"Confirm update? (yes / no)"
             )
 
