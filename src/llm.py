@@ -61,12 +61,15 @@ Choose the correct intent and fill in the relevant fields:
 
 - unknown: intent is completely unclear"""
 
+    print(f"\n[TRACKING] 🧠 Intent Router -> sending message to LLM: '{user_message}'")
     llm = _get_llm().with_structured_output(IntentResult)
 
     try:
-        return llm.invoke(prompt)
+        res = llm.invoke(prompt)
+        print(f"[TRACKING] 🎯 Intent Router output -> intent='{res.intent}'")
+        return res
     except Exception as e:
-        print(f"[Warning] LLM intent parsing failed: {e}")
+        print(f"[TRACKING] ⚠️ LLM intent parsing failed: {e}")
         return IntentResult(intent="unknown")
 
 
@@ -75,6 +78,7 @@ def rewrite_note(old_note, user_instruction: str) -> RewrittenNote:
     Rewrite an existing note based on user instruction.
     Returns a typed RewrittenNote.
     """
+    print(f"\n[TRACKING] ✍️ LLM Rewrite -> updating note '{old_note.title}' with instruction: '{user_instruction}'")
     prompt = f"""Update this note based on the user's instruction. Apply ONLY the requested change — keep everything else exactly the same.
 
 Current note:
@@ -87,9 +91,11 @@ User's instruction: "{user_instruction}" """
     llm = _get_llm().with_structured_output(RewrittenNote)
 
     try:
-        return llm.invoke(prompt)
+        res = llm.invoke(prompt)
+        print(f"[TRACKING] ✅ LLM Rewrite finished -> new title: '{res.title}'")
+        return res
     except Exception as e:
-        print(f"[Warning] LLM note rewrite failed: {e}")
+        print(f"[TRACKING] ⚠️ LLM note rewrite failed: {e}")
         return RewrittenNote(
             title=old_note.title,
             body=old_note.body,

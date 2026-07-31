@@ -20,7 +20,7 @@ class NoteStore:
     def _get_connection(self) -> sqlite3.Connection:
         """Open a connection to the SQLite database file."""
         conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row  # makes rows accessible by column name (e.g. row["title"])
+        conn.row_factory = sqlite3.Row
         return conn
 
     def _init_db(self) -> None:
@@ -62,6 +62,7 @@ class NoteStore:
             )
             conn.commit()
 
+        print(f"[TRACKING] 💾 [SQLite] Inserted note ID: {note.short_id} ('{note.title}')")
         return note
 
     # ── Read ──────────────────────────────────────────────────────────────────
@@ -90,7 +91,9 @@ class NoteStore:
                 (kw, kw, kw, top_n),
             ).fetchall()
 
-        return [self._row_to_note(row) for row in rows]
+        results = [self._row_to_note(row) for row in rows]
+        print(f"[TRACKING] 🔍 [SQLite] Keyword search '{keyword}' -> found {len(results)} note(s)")
+        return results
 
     def search_by_tags(self, tags: list[str], top_n: int = None) -> list[Note]:
         """Find notes that have at least one of the given tags."""
@@ -107,6 +110,7 @@ class NoteStore:
             if len(results) >= top_n:
                 break
 
+        print(f"[TRACKING] 🏷️ [SQLite] Tag search {tags} -> found {len(results)} note(s)")
         return results
 
     # ── Update ────────────────────────────────────────────────────────────────
@@ -126,7 +130,7 @@ class NoteStore:
             )
             conn.commit()
 
-        return Note(
+        updated = Note(
             id=existing.id,
             title=title,
             body=body,
@@ -134,6 +138,8 @@ class NoteStore:
             created_at=existing.created_at,
             updated_at=new_updated_at,
         )
+        print(f"[TRACKING] ✏️ [SQLite] Updated note ID: {updated.short_id} ('{updated.title}')")
+        return updated
 
     # ── Delete ────────────────────────────────────────────────────────────────
 
@@ -147,4 +153,5 @@ class NoteStore:
             conn.execute("DELETE FROM notes WHERE id = ?", (existing.id,))
             conn.commit()
 
+        print(f"[TRACKING] 🗑️ [SQLite] Deleted note ID: {existing.short_id}")
         return True
