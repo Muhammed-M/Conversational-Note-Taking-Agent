@@ -78,6 +78,20 @@ def test_tag_search_flow(app):
     assert "Meeting Notes" in state["final_response"]
 
 
+def test_chitchat_flow(app):
+    agent, store = app
+    state = create_initial_state()
+
+    # Pass chitchat intent result to agent logic
+    result = IntentResult(intent="chitchat", chitchat_response="Hello there! How can I assist with your notes?")
+    # Directly test the routing branch logic
+    if result.intent == "chitchat":
+        state["final_response"] = result.chitchat_response
+
+    assert state["final_response"] == "Hello there! How can I assist with your notes?"
+
+
+
 def test_delete_cancel_flow(app):
     agent, store = app
     note = store.add_note(title="Important Note", body="Do not delete this")

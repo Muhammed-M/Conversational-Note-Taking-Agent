@@ -29,7 +29,7 @@ def pick_intent(user_message: str, history: list[dict]) -> IntentResult:
 
     history_text = "\n".join(history_lines) if history_lines else "(no history yet)"
 
-    prompt = f"""You are a note-taking assistant. Analyze the conversation and decide what the user wants to do.
+    prompt = f"""You are a helpful conversational note-taking assistant. Analyze the conversation and decide what the user wants to do.
 
 Conversation history:
 {history_text}
@@ -38,7 +38,7 @@ Current user message: "{user_message}"
 
 Choose the correct intent and fill in the relevant fields:
 
-- save: user wants to create a new note
+- save: user wants to create or save a new note
   → fill: title (short, 3-8 words), body (clean note content), tags (1-3 categories)
 
 - search_keyword: user is looking for notes that contain a specific word
@@ -56,7 +56,10 @@ Choose the correct intent and fill in the relevant fields:
 - delete: user wants to remove a note
   → fill: query (describe which note to delete)
 
-- unknown: intent is unclear"""
+- chitchat: user is greeting, saying thanks, asking who you are, or making casual conversation (e.g. "hi", "hello", "thank you", "thanks!", "how are you?")
+  → fill: chitchat_response (write a warm, friendly, natural response acknowledging what they said and offering help with their notes)
+
+- unknown: intent is completely unclear"""
 
     llm = _get_llm().with_structured_output(IntentResult)
 

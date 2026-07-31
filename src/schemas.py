@@ -18,6 +18,7 @@ class IntentResult(BaseModel):
         "search_semantic",
         "update",
         "delete",
+        "chitchat",
         "unknown",
     ] = Field(description="What the user wants to do.")
 
@@ -40,6 +41,10 @@ class IntentResult(BaseModel):
     query: Optional[str] = Field(
         default=None,
         description="Natural language description — what to find, what to change, or which note to delete.",
+    )
+    chitchat_response: Optional[str] = Field(
+        default=None,
+        description="Dynamic conversational response when intent is 'chitchat' (e.g. greetings, thanks, small talk).",
     )
 
 

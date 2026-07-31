@@ -54,6 +54,13 @@ class Agent:
         elif result.intent == "delete":
             return self._start_delete(result, state)
 
+        elif result.intent == "chitchat":
+            state["final_response"] = (
+                result.chitchat_response
+                or "Hello! How can I help you manage your notes today?"
+            )
+            return state
+
         else:
             state["final_response"] = (
                 "I'm your note-taking assistant. I can save, search, update, or delete your notes. What would you like to do?"
