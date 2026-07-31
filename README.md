@@ -1,149 +1,245 @@
-# Conversational Note-Taking Agent
+# Conversational Note-Taking Agent 📝
 
-A production-grade conversational note-taking CLI agent built for the TechLabs London AI Engineer Assessment. 
+An intelligent, modular conversational AI agent designed for interactive note-taking and retrieval. Built with **Python**, **LangChain**, **Google Gemini**, **SQLite**, and **Qdrant Cloud Vector Database**.
 
-The system enables users to manage personal notes entirely through natural language conversation, featuring **Intent Disambiguation**, **Confirmation Gates for Destructive Actions**, **Multi-Turn Context Awareness**, and **Hybrid Vector-SQLite Retrieval**.
-
----
-
-## 🏗️ Architecture Overview
-
-```
-                        ┌─────────────────────────────────┐
-                        │      Natural Language User      │
-                        └────────────────┬────────────────┘
-                                         │
-                                         ▼
-                        ┌─────────────────────────────────┐
-                        │    NoteAgentGraph (LangGraph)   │
-                        └───────┬─────────────────┬───────┘
-                                │                 │
-            ┌───────────────────┘                 └───────────────────┐
-            ▼                                                         ▼
-┌───────────────────────┐                                 ┌───────────────────────┐
-│     SQLite Store      │ ◄────── Sync Observers ────────►│  Qdrant Vector Store  │
-│  (Canonical Database) │  (on_created/updated/deleted)   │   (Semantic Index)    │
-└───────────────────────┘                                 └───────────────────────┘
-```
-
-### 1. Dual-Storage Design & Sync Rule
-- **SQLite (`store.py`)**: Canonical source of truth. All CRUD operations mutate SQLite first. SQLite also handles structured filters (tag exact matches, ISO date ranges).
-- **Qdrant Vector Index (`vector_store.py`)**: Vector similarity index where payloads contain **only `note_id`** (preventing payload duplication and data drift).
-- **Sync Rule**: SQLite mutation events register observers (`on_created`, `on_updated`, `on_deleted`). Whenever a note is inserted, updated, or removed in SQLite, the vector index automatically syncs.
-- **Resilience**: If Qdrant or embedding APIs are offline, search gracefully degrades to SQLite `LIKE` keyword search without crashing.
-
-### 2. Safety & Control Flow Gates
-- **Intent Disambiguation Gate (`AWAITING_DISAMBIGUATION`)**: When a user's request matches 2+ candidate notes (e.g., "Delete the project review note"), execution pauses and prompts the user to pick a specific candidate by number before executing.
-- **Confirmation Gate (`AWAITING_CONFIRM`)**: Destructive actions (`delete` or significant `update`) pause the graph, displaying the exact target note title and ID, requiring explicit user confirmation (`yes` / `no`) before writing to the database.
-- **Multi-Turn Anaphora Resolution**: Tracks `last_note_id` in state. If a user follows up with *"Actually, add a deadline to that last note"* or *"Delete it"*, the agent seamlessly resolves the target note.
+The agent features **structured LLM output parsing**, **hybrid search (keyword, tag, and semantic vector search)**, and **human-in-the-loop safety gates** for state-modifying actions (updates & deletions).
 
 ---
 
-## 🛠️ Project Structure
+## 🌟 Key Features
 
-```
-.
-├── models.py              # Domain model Note entity & UTC timestamp helpers
-├── store.py               # SQLite canonical store with observer callbacks
-├── vector_store.py        # Qdrant client wrapper & embedding fallback
-├── tools.py               # Typed Pydantic tool schemas for LLM function calls
-├── state.py               # AgentState TypedDict definition
-├── graph.py               # LangGraph state machine execution & safety gates
-├── main.py                # Interactive CLI entry point
-├── pyproject.toml         # Package definition & dependencies
-├── .env.example           # Environment template (GEMINI_API_KEY)
-└── tests/                 # Automated test suite
-    ├── test_store.py            # Unit tests for SQLite CRUD & observers
-    ├── test_vector_store.py     # Unit tests for Qdrant index & search
-    ├── test_disambiguation.py   # Unit tests for Intent Disambiguation gate
-    └── test_confirmation_flow.py# Unit tests for Confirmation gate & multi-turn
+* **Intent Routing**: Analyzes user input and conversation history to route messages into targeted workflows (`save`, `search_keyword`, `search_tags`, `search_semantic`, `update`, `delete`, `chitchat`).
+* **Structured Output**: Uses Pydantic schemas (`IntentResult`, `RewrittenNote`) via LangChain to guarantee type-safe, deterministic responses from Gemini without manual string/JSON parsing.
+* **Hybrid Storage Architecture**:
+  * **SQLite**: Primary relational store for note titles, full body content, tag lists, and timestamps.
+  * **Qdrant Cloud**: Vector database for dense semantic embeddings using `gemini-embedding-2`.
+* **Human-in-the-Loop Safety Gates**:
+  * **Update Confirmation**: Previews rewritten titles, bodies, and tags generated by Gemini before applying changes to database stores.
+  * **Disambiguation Gate**: Asks the user to pick from numbered candidate notes when an update/delete request matches multiple notes.
+  * **Delete Confirmation**: Prompts explicit `yes/no` confirmation before removing data.
+* **Console Execution Tracking**: Built-in `[TRACKING]` logging showing real-time routing decisions, store operations, and state machine transitions.
+
+---
+
+## 🏗️ Architecture & Project Layout
+
+```text
+Conversational-Note-Taking-Agent/
+├── src/
+│   ├── __init__.py         # Package initializer
+│   ├── agent.py            # Core Agent orchestrator & flow handlers
+│   ├── config.py           # Centralized configuration & environment loader
+│   ├── llm.py              # Gemini LLM invocation & structured output routing
+│   ├── models.py           # Note domain model & dataclass definitions
+│   ├── schemas.py          # Pydantic output schemas (IntentResult, RewrittenNote)
+│   ├── state.py            # AgentState TypedDict definition
+│   ├── store.py            # SQLite database store & CRUD operations
+│   └── vector_store.py     # Qdrant cloud vector store wrapper
+├── tests/                  # Unit and integration test suite
+│   ├── conftest.py
+│   ├── test_agent.py
+│   ├── test_store.py
+│   └── test_vector_store.py
+├── main.py                 # CLI interactive shell entry point
+├── pyproject.toml          # Dependencies and pytest config
+├── test_prompts.md         # Example evaluation prompts
+└── README.md
 ```
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Installation
-Clone the repository and install dependencies using `pip` or `uv`:
+### 1. Prerequisites & Environment Setup
 
+Ensure Python 3.13+ and `uv` (or `pip`) are installed.
+
+Clone the repository and install dependencies:
 ```bash
-# Using pip
-pip install -e .
-
-# Or using uv
 uv sync
 ```
 
-### 2. Set API Key (Optional for Remote Embeddings & Gemini)
-Copy `.env.example` to `.env` and add your Google Gemini API key:
+Create a `.env` file in the project root:
+```env
+# Gemini API
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemma-4-31b-it
+GEMINI_EMBEDDING_MODEL=gemini-embedding-2
 
-```bash
-cp .env.example .env
+# Qdrant Cloud Vector Database
+QDRANT_URL=https://your-cluster-url.cloud.qdrant.io
+QDRANT_API_KEY=your_qdrant_api_key_here
+QDRANT_COLLECTION=notes
+
+# Agent Limits
+MEMORY_SIZE=10
+TOP_K_KEYWORD=3
+TOP_K_TAG=3
+TOP_K_SEMANTIC=1
+TOP_K_CANDIDATES=3
 ```
 
-> **Note**: If `GEMINI_API_KEY` is omitted, the agent automatically falls back to an offline deterministic feature-vector embedder and rule parser, allowing 100% offline functionality.
+### 2. Running the Agent
 
-### 3. Run Interactive CLI
+Start the interactive terminal CLI session:
 ```bash
-python main.py
-```
-
-### 4. Run Test Suite
-```bash
-python -m pytest tests/
+uv run python main.py
 ```
 
 ---
 
-## 💡 Example Conversational Flows
+## 💻 CLI Interaction & Workflow Examples
 
-### 1. Add Note
-```
-User: Save a note about team standup — we agreed to move it to Tuesdays, tag it as meetings.
-Agent: Saved note 'Team standup' (ID: a1b2c3d4) with tags: meetings.
+### 📥 1. Saving a New Note (`save` intent)
+
+```text
+You: Save a note about our Backend Architecture Refactoring Decisions. We decided to migrate REST API services to FastAPI, keeping PostgreSQL for user accounts and Redis for real-time updates. Target release is end of Q3. Tag under architecture, backend, python.
+
+[TRACKING] Agent received user message. Current mode: 'IDLE'
+[TRACKING] Intent Router -> sending message to LLM: 'Save a note about...'
+[TRACKING] Intent Router output -> intent='save'
+[TRACKING] Routing message to handler for intent: 'save'
+[TRACKING] Executing SAVE handler -> title='Backend Architecture Refactoring Decisions', tags=['architecture', 'backend', 'python']
+[TRACKING] [SQLite] Inserted note ID: 4f8b9a12 ('Backend Architecture Refactoring Decisions')
+[TRACKING] [Qdrant] Upserted embedding for note ID: 4f8b9a12
+
+Agent: ✅ Saved: 'Backend Architecture Refactoring Decisions' (ID: 4f8b9a12) | Tags: architecture, backend, python
 ```
 
-### 2. Hybrid Search
-```
-User: What did I write about standup?
+---
+
+### 🔍 2. Semantic Search (`search_semantic` intent)
+
+```text
+You: What did we decide about our backend framework and database?
+
+[TRACKING] Agent received user message. Current mode: 'IDLE'
+[TRACKING] Intent Router -> sending message to LLM: 'What did we decide about...'
+[TRACKING] Intent Router output -> intent='search_semantic'
+[TRACKING] Routing message to handler for intent: 'search_semantic'
+[TRACKING] Executing SEMANTIC SEARCH handler -> query='backend framework and database'
+[TRACKING] [Qdrant] Semantic search query='backend framework and database' -> returned 1 point ID(s)
+[TRACKING] Formatting 1 search result(s)
+
 Agent: Found 1 note(s):
-• 'Team standup' (ID: a1b2c3d4) [tags: meetings]
-  we agreed to move it to Tuesdays
+
+• [4f8b9a12] Backend Architecture Refactoring Decisions | Tags: architecture, backend, python
+  We decided to migrate REST API services to FastAPI, keeping PostgreSQL for user accounts and Redis for real-time updates. Target release is end of Q3.
 ```
 
-### 3. Intent Disambiguation
+---
+
+### ✏️ 3. Note Update with Human Preview Confirmation (`update` intent)
+
+```text
+You: Update the backend architecture note to mention Apache Kafka for event processing.
+
+[TRACKING] Agent received user message. Current mode: 'IDLE'
+[TRACKING] Intent Router output -> intent='update'
+[TRACKING] Executing UPDATE handler -> query='backend architecture note'
+[TRACKING] Searching candidates across vector store (Qdrant) and keyword store (SQLite)...
+[TRACKING] Candidates found total: 1
+[TRACKING] Exactly 1 candidate found: 'Backend Architecture Refactoring Decisions' (4f8b9a12)
+[TRACKING] LLM Rewrite -> updating note 'Backend Architecture Refactoring Decisions' with instruction: 'Update the backend architecture note...'
+[TRACKING] LLM Rewrite finished -> new title: 'Backend Architecture Refactoring Decisions'
+[TRACKING] Transitioning to mode: AWAITING_CONFIRM (update preview confirmation)
+
+Agent: Here is how 'Backend Architecture Refactoring Decisions' will look after the update:
+
+  Title : Backend Architecture Refactoring Decisions
+  Body  : We decided to migrate REST API services to FastAPI, keeping PostgreSQL for user accounts, Redis for real-time updates, and Apache Kafka for event stream processing. Target release is end of Q3.
+  Tags  : architecture, backend, python
+
+Confirm update? (yes / no)
+
+[AWAITING_CONFIRM] You: yes
+
+[TRACKING] Agent received user message. Current mode: 'AWAITING_CONFIRM'
+[TRACKING] User CONFIRMED pending action: intent='update', note_id='4f8b9a12'
+[TRACKING] [SQLite] Updated note ID: 4f8b9a12 ('Backend Architecture Refactoring Decisions')
+[TRACKING] [Qdrant] Upserted embedding for note ID: 4f8b9a12
+
+Agent: ✅ Updated 'Backend Architecture Refactoring Decisions' (ID: 4f8b9a12).
 ```
-User: Delete the standup note
-(If multiple standup notes exist)
-Agent: Multiple notes matched your request to delete. Which one did you mean?
-[1] 'Team standup' (ID: a1b2c3d4): we agreed to move it to Tuesdays...
-[2] 'Standup agenda' (ID: e5f6g7h8): review sprint goals...
+
+---
+
+### 🔀 4. Candidate Disambiguation (`AWAITING_DISAMBIGUATION`)
+
+```text
+You: Delete the note about Python
+
+[TRACKING] Agent received user message. Current mode: 'IDLE'
+[TRACKING] Intent Router output -> intent='delete'
+[TRACKING] Searching candidates across vector store (Qdrant) and keyword store (SQLite)...
+[TRACKING] Candidates found total: 2
+[TRACKING] Multiple candidates (2) -> transitioning to mode: AWAITING_DISAMBIGUATION
+
+Agent: Found 2 notes that could match. Which one did you mean?
+
+  [1] 'Backend Architecture Refactoring Decisions' (ID: 4f8b9a12)
+  [2] 'Python Asyncio Tutorial' (ID: 9a2c1103)
+
 Reply with the number (e.g. 1) or 'cancel'.
 
-User: 1
-Agent: Are you sure you want to DELETE note 'Team standup' (ID: a1b2c3d4)? (yes / no)
-```
+[AWAITING_DISAMBIGUATION] You: 2
 
-### 4. Multi-Turn Anaphora ("That note")
-```
-User: Add a note: Buy groceries : milk, eggs, bread
-Agent: Saved note 'Buy groceries' (ID: 9x8y7z6w).
+[TRACKING] Agent received user message. Current mode: 'AWAITING_DISAMBIGUATION'
+[TRACKING] User selected candidate: 'Python Asyncio Tutorial' (9a2c1103)
+[TRACKING] Transitioning to mode: AWAITING_CONFIRM (delete confirmation)
 
-User: Actually add apples to that last note
-Agent: Are you sure you want to UPDATE note 'Buy groceries' (ID: 9x8y7z6w)? (yes / no)
+Agent: Are you sure you want to delete 'Python Asyncio Tutorial' (ID: 9a2c1103)? (yes / no)
 ```
 
 ---
 
-## 🎓 Technical Interview Guide (How to Explain Code Decisions)
+### 💬 5. Casual Small Talk (`chitchat` intent)
 
-If asked during the technical review:
+```text
+You: Hello! Who are you and how can you help me?
 
-1. **Why SQLite + Qdrant?**
-   > *"SQLite is our canonical relational store ensuring ACID guarantees and exact SQL filtering. Qdrant serves exclusively as a vector index storing `note_id` payloads, which eliminates data duplication and payload sync bugs."*
+[TRACKING] Agent received user message. Current mode: 'IDLE'
+[TRACKING] Intent Router output -> intent='chitchat'
+[TRACKING] Executing CHITCHAT handler
 
-2. **How is storage synchronization guaranteed?**
-   > *"We implemented an Observer / Callback pattern inside `NoteStore`. Any call to `add_note`, `update_note`, or `delete_note` automatically fires registered listeners, ensuring Qdrant is updated atomically from the canonical store."*
+Agent: Hello! I'm your AI note-taking assistant. I can help you save new notes, search through existing ones using keywords, tags, or semantic search, and safely update or delete your notes. What would you like to work on today?
+```
 
-3. **How do Safety Gates work?**
-   > *"Rather than letting the LLM directly invoke destructive side-effects, tool intent flows through state machine nodes (`AWAITING_DISAMBIGUATION` and `AWAITING_CONFIRM`). If candidates > 1, it forces disambiguation. For updates and deletes, it explicitly prompts for user confirmation (`yes`/`no`) before committing to disk."*
+---
+
+## 🧪 Running Unit & Integration Tests
+
+The project includes unit and integration tests using `pytest` and mock vector stores:
+
+```bash
+uv run python -m pytest tests/test_store.py tests/test_agent.py -v
+```
+
+Output:
+```text
+tests/test_store.py::test_add_and_get_note PASSED                        [  7%]
+tests/test_store.py::test_update_note PASSED                             [ 14%]
+tests/test_store.py::test_delete_note PASSED                             [ 21%]
+tests/test_store.py::test_search_by_keyword PASSED                       [ 28%]
+tests/test_store.py::test_search_by_tags PASSED                          [ 35%]
+tests/test_store.py::test_get_note_not_found PASSED                      [ 42%]
+tests/test_agent.py::test_save_flow PASSED                               [ 50%]
+tests/test_agent.py::test_keyword_search_flow PASSED                     [ 57%]
+tests/test_agent.py::test_tag_search_flow PASSED                         [ 64%]
+tests/test_agent.py::test_chitchat_flow PASSED                           [ 71%]
+tests/test_agent.py::test_delete_cancel_flow PASSED                      [ 78%]
+tests/test_agent.py::test_delete_confirm_flow PASSED                     [ 85%]
+tests/test_agent.py::test_disambiguation_by_number PASSED                [ 92%]
+tests/test_agent.py::test_disambiguation_cancel PASSED                   [100%]
+
+============================= 14 passed in 3.45s ==============================
+```
+
+---
+
+## 🛡️ Guardrails & Safety Architecture
+
+1. **Type-Safety Guardrails**: LLM intent extraction and rewrite outputs are constrained by Pydantic models (`IntentResult`, `RewrittenNote`), eliminating runtime parsing exceptions.
+2. **State Modification Guardrails**: No note is updated or deleted in SQLite or Qdrant without explicit user confirmation (`AWAITING_CONFIRM`).
+3. **Disambiguation Guardrails**: Prevents accidental updates or deletions when queries match multiple entries (`AWAITING_DISAMBIGUATION`).
+4. **Fallback Guardrails**: Invalid LLM responses automatically fall back to safe default states (`unknown` intent or unchanged original notes).
