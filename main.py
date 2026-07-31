@@ -1,17 +1,15 @@
 """
 main.py — CLI entry point for the Conversational Note-Taking Agent.
 
-Run this file to start a chat session in your terminal:
+Run this file from the project root:
   python main.py
-
-Type your message and press Enter. Type 'exit' to quit.
 """
 
 import sys
-from agent import Agent
-from state import create_initial_state
-from store import NoteStore
-from vector_store import VectorStore
+from src.agent import Agent
+from src.state import create_initial_state
+from src.store import NoteStore
+from src.vector_store import VectorStore
 
 
 def print_banner():
@@ -27,21 +25,15 @@ def print_banner():
 
 
 def main():
-    # Set up the two storage layers
-    store = NoteStore(db_path="notes.db")       # SQLite: stores all note data
-    vector_store = VectorStore()                 # Qdrant: stores note embeddings for semantic search
-
-    # Create the agent, wiring it to both stores
+    store = NoteStore()
+    vector_store = VectorStore()
     agent = Agent(store=store, vector_store=vector_store)
-
-    # Start with a clean blank state (empty memory, IDLE mode)
     state = create_initial_state()
 
     print_banner()
 
     while True:
         try:
-            # Show the current mode if we're waiting for input (disambiguation or confirmation)
             mode = state.get("mode", "IDLE")
             prefix = f"[{mode}] " if mode != "IDLE" else ""
 
@@ -54,10 +46,7 @@ def main():
                 print("\nGoodbye!")
                 sys.exit(0)
 
-            # Pass the message to the agent and get back the updated state
             state = agent.run(user_input, state)
-
-            # Print the agent's response
             print(f"\nAgent: {state.get('final_response', '')}\n")
 
         except (KeyboardInterrupt, EOFError):

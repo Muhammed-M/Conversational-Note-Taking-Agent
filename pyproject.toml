@@ -14,10 +14,5 @@ dependencies = [
 ]
 
 [tool.pytest.ini_options]
-# Add the project root to the Python path so tests can import modules like 'agent', 'store', etc.
-pythonpath = ["."]
-
-[dependency-groups]
-dev = [
-    "pytest>=9.1.1",
-]
+# Add src and project root to pythonpath so tests can import from src.* or root
+pythonpath = [".", "src"]

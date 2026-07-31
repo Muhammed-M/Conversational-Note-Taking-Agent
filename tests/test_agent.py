@@ -1,69 +1,47 @@
 """
 test_agent.py — Integration tests for the Agent conversation flows.
-
-These tests check the 4 main agent flows using a mock vector store,
-so they run without a real Qdrant or Gemini connection.
-
-The MockVectorStore replaces VectorStore — it has the same interface but
-does nothing (no network calls). This lets us test the agent's routing,
-state management, and SQLite operations in isolation.
-
-Note: Tests that require a real LLM (intent parsing) use a fake message
-that bypasses LLM by injecting state directly, since we can't call Gemini in tests.
 """
 
 import os
 import shutil
 import tempfile
 import pytest
-from agent import Agent
-from schemas import IntentResult
-from state import create_initial_state
-from store import NoteStore
-from models import Note
+
+from src.agent import Agent
+from src.schemas import IntentResult
+from src.state import create_initial_state
+from src.store import NoteStore
+from src.models import Note
 
 
 class MockVectorStore:
-    """
-    A fake VectorStore that does nothing.
-    Used in tests so we don't need a real Qdrant or Gemini connection.
-    Has the same method signatures as the real VectorStore.
-    """
+    """Fake VectorStore that does nothing for unit tests."""
 
     def upsert_note(self, note: Note) -> None:
-        pass  # pretend to store
+        pass
 
     def delete_note(self, note_id: str) -> None:
-        pass  # pretend to delete
+        pass
 
     def search(self, query: str, top_k: int = 1) -> list[str]:
-        return []  # return no results (SQLite keyword search will handle it in tests)
+        return []
 
 
 @pytest.fixture
 def app():
-    """
-    Set up a fresh NoteStore + MockVectorStore + Agent for each test.
-    Uses a temporary SQLite file that is deleted after the test.
-    """
     tmpdir = tempfile.mkdtemp()
     db_path = os.path.join(tmpdir, "test.db")
     store = NoteStore(db_path=db_path)
     vector_store = MockVectorStore()
     agent = Agent(store=store, vector_store=vector_store)
     yield agent, store
-    shutil.rmtree(tmpdir, ignore_errors=True)  # ignore_errors handles Windows SQLite file locks
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def test_save_flow(app):
-    """
-    Test the save flow by calling _save_note directly.
-    Verifies the note is saved to SQLite and state is updated correctly.
-    """
     agent, store = app
     state = create_initial_state()
 
-    # Build an IntentResult object (the shape pick_intent() returns)
     result = IntentResult(
         intent="save",
         title="Team Standup",
@@ -72,22 +50,15 @@ def test_save_flow(app):
     )
     state = agent._save_note(result, state)
 
-    # The response should confirm saving
     assert "Saved" in state["final_response"] or "✅" in state["final_response"]
-
-    # The note ID should be stored in state
     assert state["last_note_id"] is not None
 
-    # The note should exist in SQLite
     note = store.get_note_by_id(state["last_note_id"])
     assert note is not None
     assert note.title == "Team Standup"
 
 
 def test_keyword_search_flow(app):
-    """
-    Test keyword search: add a note, then search for a word in it.
-    """
     agent, store = app
     store.add_note(title="Python Tips", body="Use list comprehensions in Python", tags=["python"])
 
@@ -98,9 +69,6 @@ def test_keyword_search_flow(app):
 
 
 def test_tag_search_flow(app):
-    """
-    Test tag search: add a note with tags, then search by those tags.
-    """
     agent, store = app
     store.add_note(title="Meeting Notes", body="Q3 roadmap discussed", tags=["meetings", "work"])
 
@@ -111,15 +79,10 @@ def test_tag_search_flow(app):
 
 
 def test_delete_cancel_flow(app):
-    """
-    Test that cancelling a delete leaves the note untouched.
-    Uses _start_delete and _cancel directly to avoid needing LLM.
-    """
     agent, store = app
     note = store.add_note(title="Important Note", body="Do not delete this")
 
     state = create_initial_state()
-    # Simulate the agent finding a candidate and asking for confirmation
     state["pending_action"] = {"intent": "delete", "note_id": note.id, "note_title": note.title}
     state["mode"] = "AWAITING_CONFIRM"
     state["messages"].append({"role": "user", "content": "no"})
@@ -128,14 +91,10 @@ def test_delete_cancel_flow(app):
 
     assert state["mode"] == "IDLE"
     assert "cancelled" in state["final_response"].lower()
-    # Note must still exist
     assert store.get_note_by_id(note.id) is not None
 
 
 def test_delete_confirm_flow(app):
-    """
-    Test that confirming a delete removes the note from SQLite.
-    """
     agent, store = app
     note = store.add_note(title="Old Note", body="Temporary content")
 
@@ -147,14 +106,10 @@ def test_delete_confirm_flow(app):
 
     assert state["mode"] == "IDLE"
     assert "Deleted" in state["final_response"] or "🗑️" in state["final_response"]
-    # Note must be gone from SQLite
     assert store.get_note_by_id(note.id) is None
 
 
 def test_disambiguation_by_number(app):
-    """
-    Test that the user can pick a note by number during disambiguation.
-    """
     agent, store = app
     note1 = store.add_note(title="Alpha Project", body="Alpha details", tags=["work"])
     note2 = store.add_note(title="Beta Project", body="Beta details", tags=["work"])
@@ -164,7 +119,6 @@ def test_disambiguation_by_number(app):
     state["search_candidates"] = [note1.to_dict(), note2.to_dict()]
     state["pending_action"] = {"intent": "delete"}
 
-    # User picks option 1
     state = agent._resolve_disambiguation("1", state)
 
     assert state["mode"] == "AWAITING_CONFIRM"
@@ -172,9 +126,6 @@ def test_disambiguation_by_number(app):
 
 
 def test_disambiguation_cancel(app):
-    """
-    Test that typing 'cancel' during disambiguation resets to IDLE.
-    """
     agent, store = app
     note = store.add_note(title="Some Note", body="Some content")
 

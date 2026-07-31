@@ -1,32 +1,20 @@
 """
 store.py — SQLite storage for notes.
-
-This module handles all reading and writing of notes to the SQLite database.
-It provides these operations:
-  - add_note       → save a new note
-  - get_note_by_id → fetch a note by its ID
-  - search_by_keyword → find notes that contain a specific word
-  - search_by_tags    → find notes that have specific tags
-  - update_note    → change an existing note
-  - delete_note    → remove a note
-
-The vector store (Qdrant) is kept in sync by the agent — not here.
-This file only deals with SQLite.
 """
 
 import json
 import sqlite3
 from typing import Optional
 
-from models import Note, utc_now_iso
-import config
+from src.models import Note, utc_now_iso
+from src import config
 
 
 class NoteStore:
     """SQLite database store for notes."""
 
-    def __init__(self, db_path: str = "notes.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or config.SQLITE_DB_PATH
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -56,7 +44,7 @@ class NoteStore:
             id=row["id"],
             title=row["title"],
             body=row["body"],
-            tags=json.loads(row["tags"]),  # tags are stored as a JSON string like '["work", "meetings"]'
+            tags=json.loads(row["tags"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -64,10 +52,7 @@ class NoteStore:
     # ── Create ────────────────────────────────────────────────────────────────
 
     def add_note(self, title: str, body: str, tags: list[str] = None) -> Note:
-        """
-        Save a new note to SQLite and return it.
-        The Note model auto-generates a UUID and timestamps.
-        """
+        """Save a new note to SQLite and return it."""
         note = Note(title=title, body=body, tags=tags or [])
 
         with self._get_connection() as conn:
@@ -82,28 +67,19 @@ class NoteStore:
     # ── Read ──────────────────────────────────────────────────────────────────
 
     def get_note_by_id(self, note_id: str) -> Optional[Note]:
-        """
-        Fetch a note by its full UUID or its short 8-character ID prefix.
-        Returns None if not found.
-        """
+        """Fetch a note by full UUID or short 8-character ID prefix."""
         with self._get_connection() as conn:
-            # Try exact match first (full UUID)
             row = conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
 
-            # If not found and the ID looks short, try prefix match
             if not row and len(note_id) < 36:
                 row = conn.execute("SELECT * FROM notes WHERE id LIKE ?", (f"{note_id}%",)).fetchone()
 
         return self._row_to_note(row) if row else None
 
     def search_by_keyword(self, keyword: str, top_n: int = None) -> list[Note]:
-        """
-        Find notes where the title, body, or tags contain the given keyword.
-        Uses SQL LIKE for a case-insensitive partial match.
-        Returns at most top_n notes, ordered by most recently updated.
-        """
+        """Find notes matching keyword in title, body, or tags."""
         top_n = top_n or config.TOP_K_KEYWORD
-        kw = f"%{keyword.strip()}%"  # wrap in % wildcards for LIKE matching
+        kw = f"%{keyword.strip()}%"
 
         with self._get_connection() as conn:
             rows = conn.execute(
@@ -117,11 +93,7 @@ class NoteStore:
         return [self._row_to_note(row) for row in rows]
 
     def search_by_tags(self, tags: list[str], top_n: int = None) -> list[Note]:
-        """
-        Find notes that have at least one of the given tags.
-        Loads all notes and filters in memory (fine for a small local database).
-        Returns at most top_n notes, ordered by most recently updated.
-        """
+        """Find notes that have at least one of the given tags."""
         top_n = top_n or config.TOP_K_TAG
 
         with self._get_connection() as conn:
@@ -130,7 +102,6 @@ class NoteStore:
         results = []
         for row in rows:
             note_tags = [t.lower() for t in json.loads(row["tags"])]
-            # Check if any of the user's requested tags appear in this note's tags
             if any(tag.lower() in note_tags for tag in tags):
                 results.append(self._row_to_note(row))
             if len(results) >= top_n:
@@ -141,11 +112,7 @@ class NoteStore:
     # ── Update ────────────────────────────────────────────────────────────────
 
     def update_note(self, note_id: str, title: str, body: str, tags: list[str]) -> Optional[Note]:
-        """
-        Update all fields of an existing note.
-        Sets a new updated_at timestamp.
-        Returns the updated Note, or None if the note was not found.
-        """
+        """Update all fields of an existing note."""
         existing = self.get_note_by_id(note_id)
         if not existing:
             return None
@@ -164,17 +131,14 @@ class NoteStore:
             title=title,
             body=body,
             tags=tags,
-            created_at=existing.created_at,  # created_at never changes
+            created_at=existing.created_at,
             updated_at=new_updated_at,
         )
 
     # ── Delete ────────────────────────────────────────────────────────────────
 
     def delete_note(self, note_id: str) -> bool:
-        """
-        Delete a note by ID.
-        Returns True if the note was found and deleted, False if it didn't exist.
-        """
+        """Delete a note by ID."""
         existing = self.get_note_by_id(note_id)
         if not existing:
             return False
