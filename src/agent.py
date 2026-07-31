@@ -347,7 +347,7 @@ class Agent:
             state["search_candidates"] = None
 
             if deleted:
-                state["final_response"] = f" Deleted '{pending.get('note_title', '')}' successfully."
+                state["final_response"] = f"🗑️ Deleted '{pending.get('note_title', '')}' successfully."
             else:
                 state["final_response"] = "Could not find that note. It may have already been deleted."
 
@@ -374,7 +374,7 @@ class Agent:
             state["pending_action"] = None
             state["search_candidates"] = None
             state["last_note_id"] = updated_note.id
-            state["final_response"] = f" Updated '{updated_note.title}' (ID: {updated_note.short_id})."
+            state["final_response"] = f"✅ Updated '{updated_note.title}' (ID: {updated_note.short_id})."
 
         return state
 
