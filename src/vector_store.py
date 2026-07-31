@@ -59,7 +59,7 @@ class VectorStore:
                 )
             ],
         )
-        print(f"[TRACKING] 🧬 [Qdrant] Upserted embedding for note ID: {note.short_id}")
+        print(f"[TRACKING] [Qdrant] Upserted embedding for note ID: {note.short_id}")
 
     def delete_note(self, note_id: str) -> None:
         """Remove a note's embedding from Qdrant by note ID."""
@@ -67,7 +67,7 @@ class VectorStore:
             collection_name=self.collection,
             points_selector=[self._note_id_to_point_id(note_id)],
         )
-        print(f"[TRACKING] 🧬 [Qdrant] Deleted embedding point for note ID: {note_id[:8]}")
+        print(f"[TRACKING] [Qdrant] Deleted embedding point for note ID: {note_id[:8]}")
 
     def search(self, query: str, top_k: int = None) -> list[str]:
         """Search Qdrant for notes semantically similar to the query."""
@@ -86,5 +86,5 @@ class VectorStore:
             for point in response.points
             if point.payload and "note_id" in point.payload
         ]
-        print(f"[TRACKING] 🧬 [Qdrant] Semantic search query='{query}' -> returned {len(note_ids)} point ID(s)")
+        print(f"[TRACKING] [Qdrant] Semantic search query='{query}' -> returned {len(note_ids)} point ID(s)")
         return note_ids

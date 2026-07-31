@@ -62,7 +62,7 @@ class NoteStore:
             )
             conn.commit()
 
-        print(f"[TRACKING] 💾 [SQLite] Inserted note ID: {note.short_id} ('{note.title}')")
+        print(f"[TRACKING] [SQLite] Inserted note ID: {note.short_id} ('{note.title}')")
         return note
 
     # ── Read ──────────────────────────────────────────────────────────────────
@@ -92,7 +92,7 @@ class NoteStore:
             ).fetchall()
 
         results = [self._row_to_note(row) for row in rows]
-        print(f"[TRACKING] 🔍 [SQLite] Keyword search '{keyword}' -> found {len(results)} note(s)")
+        print(f"[TRACKING] [SQLite] Keyword search '{keyword}' -> found {len(results)} note(s)")
         return results
 
     def search_by_tags(self, tags: list[str], top_n: int = None) -> list[Note]:
@@ -110,7 +110,7 @@ class NoteStore:
             if len(results) >= top_n:
                 break
 
-        print(f"[TRACKING] 🏷️ [SQLite] Tag search {tags} -> found {len(results)} note(s)")
+        print(f"[TRACKING] [SQLite] Tag search {tags} -> found {len(results)} note(s)")
         return results
 
     # ── Update ────────────────────────────────────────────────────────────────
@@ -138,7 +138,7 @@ class NoteStore:
             created_at=existing.created_at,
             updated_at=new_updated_at,
         )
-        print(f"[TRACKING] ✏️ [SQLite] Updated note ID: {updated.short_id} ('{updated.title}')")
+        print(f"[TRACKING] [SQLite] Updated note ID: {updated.short_id} ('{updated.title}')")
         return updated
 
     # ── Delete ────────────────────────────────────────────────────────────────
@@ -153,5 +153,5 @@ class NoteStore:
             conn.execute("DELETE FROM notes WHERE id = ?", (existing.id,))
             conn.commit()
 
-        print(f"[TRACKING] 🗑️ [SQLite] Deleted note ID: {existing.short_id}")
+        print(f"[TRACKING] [SQLite] Deleted note ID: {existing.short_id}")
         return True

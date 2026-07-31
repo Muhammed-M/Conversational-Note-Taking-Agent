@@ -50,7 +50,7 @@ def main():
             print(f"\nAgent: {state.get('final_response', '')}\n")
 
         except (KeyboardInterrupt, EOFError):
-            print("\nSession interrupted. Goodbye!")
+            print("\nSession Ended. Goodbye!")
             sys.exit(0)
 
 
