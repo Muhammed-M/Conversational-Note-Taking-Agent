@@ -1,6 +1,8 @@
 # Environment variables & secrets
 .env
 *.env
+test_prompts.md
+techlabs-ai-engineer-assessment.pdf
 
 # SQLite databases
 *.db
