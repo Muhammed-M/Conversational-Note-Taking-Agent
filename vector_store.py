@@ -1,254 +1,135 @@
 """
-Qdrant Vector Store Integration for Semantic Search.
+vector_store.py — Qdrant vector store for semantic search.
 
-Maintains a lightweight vector index mapping vector embeddings of note titles
-and bodies to note_id payloads. If Qdrant or embedding service is offline,
-falls back gracefully.
+This module handles storing and searching note embeddings in Qdrant cloud.
+
+The flow is:
+  1. When a note is saved or updated:
+     - Combine title + body into one text string
+     - Send it to Gemini to get a vector (list of numbers that represents the meaning)
+     - Store that vector in Qdrant, with the note's ID as the payload
+
+  2. When the user searches semantically:
+     - Embed the search query with Gemini
+     - Search Qdrant for the most similar vectors
+     - Return the matching note IDs
+     - The agent then fetches the full notes from SQLite using those IDs
+
+We store ONLY the note ID in Qdrant — all actual note data stays in SQLite.
 """
 
 import hashlib
-import math
-import os
-import re
-from typing import Optional
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, PointStruct, VectorParams
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+import config
 from models import Note
 
-try:
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
-    QDRANT_AVAILABLE = True
-except ImportError:
-    QDRANT_AVAILABLE = False
 
+class VectorStore:
+    """Qdrant vector store wrapper for note embeddings."""
 
-class SimpleEmbeddingProvider:
-    """
-    Embedding Provider with API embedding support (LangChain Google GenAI) and
-    deterministic offline fallback.
-    """
+    def __init__(self):
+        # Set up the Gemini embedding model
+        self.embedder = GoogleGenerativeAIEmbeddings(
+            model=config.GEMINI_EMBEDDING_MODEL,
+            google_api_key=config.GEMINI_API_KEY,
+        )
 
-    def __init__(self, vector_dim: int = 128):
-        self.vector_dim = vector_dim
-        self.api_key = os.environ.get("GEMINI_API_KEY")
-        self.model_name = os.environ.get("GEMINI_EMBEDDING_MODEL", "models/embedding-001")
-        self._embedder_inst = None
+        # Connect to the Qdrant cloud cluster
+        self.client = QdrantClient(url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY)
 
-        if self.api_key:
-            try:
-                from langchain_google_genai import GoogleGenerativeAIEmbeddings
-                self._embedder_inst = GoogleGenerativeAIEmbeddings(
-                    model=self.model_name,
-                    google_api_key=self.api_key,
-                )
-            except Exception as e:
-                print(f"[Warning] Failed to initialize GoogleGenerativeAIEmbeddings: {e}")
+        # Name of the collection inside Qdrant where we store note embeddings
+        self.collection = config.QDRANT_COLLECTION
 
-    def embed_text(self, text: str) -> list[float]:
-        """
-        Generate embedding vector for text. Uses LangChain Google GenAI embeddings if configured,
-        otherwise generates a normalized term-frequency feature vector.
-        """
-        if self._embedder_inst:
-            try:
-                vec = self._embedder_inst.embed_query(text)
-                if vec:
-                    return vec
-            except Exception as e:
-                print(f"[Warning] Remote embedding generation failed, using local fallback: {e}")
-
-        return self._local_deterministic_embedding(text)
-
-    def _local_deterministic_embedding(self, text: str) -> list[float]:
-        """
-        Generate deterministic normalized hash-bag-of-words vector.
-        Ensures semantic/keyword similarity works offline in unit tests.
-        """
-        vector = [0.0] * self.vector_dim
-        words = re.findall(r"\w+", text.lower())
-        if not words:
-            return vector
-
-        for word in words:
-            # Map word hash to vector dimension bucket
-            idx = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16) % self.vector_dim
-            vector[idx] += 1.0
-
-        # L2 Normalize
-        norm = math.sqrt(sum(val * val for val in vector))
-        if norm > 0:
-            vector = [val / norm for val in vector]
-
-        return vector
-
-
-
-class VectorNoteStore:
-    """
-    Qdrant Vector Store wrapper for indexing and semantic retrieval.
-    Payload strictly contains note_id (canonical text stays in SQLite).
-    """
-
-    COLLECTION_NAME = "notes_semantic_index"
-
-    def __init__(
-        self,
-        location: Optional[str] = None,
-        api_key: Optional[str] = None,
-        url: Optional[str] = None,
-        vector_dim: int = 128,
-    ):
-        self.vector_dim = vector_dim
-        self.embedder = SimpleEmbeddingProvider(vector_dim=self.vector_dim)
-
-        # Auto-detect actual vector dimension from embedder
-        try:
-            sample_vector = self.embedder.embed_text("dimension_check")
-            if sample_vector and len(sample_vector) > 0:
-                self.vector_dim = len(sample_vector)
-        except Exception:
-            pass
-
-        if not QDRANT_AVAILABLE:
-            print("[Warning] qdrant-client not installed. Vector search disabled.")
-            self.client = None
-            return
-
-        env_url = url or os.environ.get("QDRANT_URL")
-        env_api_key = api_key or os.environ.get("QDRANT_API_KEY")
-
-        if env_url and env_api_key:
-            self.client = QdrantClient(url=env_url, api_key=env_api_key)
-        else:
-            loc = location if location is not None else ":memory:"
-            self.client = QdrantClient(location=loc)
-
+        # Make sure the collection exists (create it if this is the first run)
         self._ensure_collection()
 
     def _ensure_collection(self) -> None:
-        if not self.client:
-            return
-
-        try:
-            collections = [c.name for c in self.client.get_collections().collections]
-            if self.COLLECTION_NAME in collections:
-                # Inspect existing collection vector dimension
-                collection_info = self.client.get_collection(self.COLLECTION_NAME)
-                current_size = None
-                if hasattr(collection_info.config.params, "vectors"):
-                    v_config = collection_info.config.params.vectors
-                    if hasattr(v_config, "size"):
-                        current_size = v_config.size
-
-                if current_size and current_size != self.vector_dim:
-                    print(
-                        f"[Info] Recreating Qdrant collection '{self.COLLECTION_NAME}' "
-                        f"(dimension change: {current_size} -> {self.vector_dim})"
-                    )
-                    self.client.delete_collection(self.COLLECTION_NAME)
-                    collections.remove(self.COLLECTION_NAME)
-
-            if self.COLLECTION_NAME not in collections:
-                self.client.create_collection(
-                    collection_name=self.COLLECTION_NAME,
-                    vectors_config=VectorParams(
-                        size=self.vector_dim,
-                        distance=Distance.COSINE,
-                    ),
-                )
-        except Exception as e:
-            print(f"[Warning] Failed to initialize Qdrant collection: {e}")
-
-
-    def upsert_note(self, note: Note) -> bool:
         """
-        Embed note title and body, then upsert into Qdrant index.
-        Payload stores only note_id.
+        Create the Qdrant collection if it doesn't exist yet.
+        On the first run, we embed a short test string to find out
+        the vector dimension (number of elements) returned by the embedding model.
         """
-        if not self.client:
-            return False
+        existing_names = [c.name for c in self.client.get_collections().collections]
 
-        try:
-            text_to_embed = f"{note.title}\n{note.body}"
-            vector = self.embedder.embed_text(text_to_embed)
+        if self.collection not in existing_names:
+            # Find the vector dimension by embedding a sample text
+            sample_vector = self.embedder.embed_query("hello")
+            dimension = len(sample_vector)
 
-            # Use deterministic integer ID derived from UUID string for Qdrant PointStruct
-            point_id = int(hashlib.md5(note.id.encode("utf-8")).hexdigest()[:16], 16)
-
-            self.client.upsert(
-                collection_name=self.COLLECTION_NAME,
-                points=[
-                    PointStruct(
-                        id=point_id,
-                        vector=vector,
-                        payload={"note_id": note.id},
-                    )
-                ],
+            self.client.create_collection(
+                collection_name=self.collection,
+                vectors_config=VectorParams(
+                    size=dimension,           # number of dimensions in each vector
+                    distance=Distance.COSINE, # cosine similarity: measures angle between vectors
+                ),
             )
-            return True
-        except Exception as e:
-            print(f"[Warning] Failed to upsert vector for note {note.id}: {e}")
-            return False
 
-    def delete_note(self, note_id: str) -> bool:
+    def _note_id_to_point_id(self, note_id: str) -> int:
         """
-        Delete vector embedding for note_id from Qdrant index.
+        Qdrant requires integer IDs for points.
+        Convert the note's UUID string to a large integer using MD5 hashing.
+        This is deterministic — same note_id always gives same integer.
         """
-        if not self.client:
-            return False
+        return int(hashlib.md5(note_id.encode()).hexdigest()[:16], 16)
 
-        try:
-            point_id = int(hashlib.md5(note_id.encode("utf-8")).hexdigest()[:16], 16)
-            self.client.delete(
-                collection_name=self.COLLECTION_NAME,
-                points_selector=[point_id],
-            )
-            return True
-        except Exception as e:
-            print(f"[Warning] Failed to delete vector for note {note_id}: {e}")
-            return False
-
-    def search(self, query: str, top_k: int = 5, score_threshold: Optional[float] = None) -> list[str]:
+    def upsert_note(self, note: Note) -> None:
         """
-        Search vector index by natural language query.
-        Returns list of matching note_ids ranked by similarity score,
-        filtering out low-relevance matches below score_threshold.
+        Embed the note's title and body, then store (or update) the vector in Qdrant.
+        The payload stores only the note_id — full note data stays in SQLite.
+
+        "Upsert" means: insert if new, update if the note already exists.
         """
-        if not self.client or not query.strip():
-            return []
+        # Combine title and body into one string to embed
+        text = f"{note.title}\n{note.body}"
+        vector = self.embedder.embed_query(text)
 
-        if score_threshold is None:
-            # Gemini API dense embeddings use 0.30 threshold; offline sparse fallback uses 0.10 threshold
-            score_threshold = 0.30 if self.embedder.api_key else 0.10
-
-        try:
-            query_vector = self.embedder.embed_text(query)
-            
-            if hasattr(self.client, "query_points"):
-                response = self.client.query_points(
-                    collection_name=self.COLLECTION_NAME,
-                    query=query_vector,
-                    limit=top_k,
-                    score_threshold=score_threshold,
+        self.client.upsert(
+            collection_name=self.collection,
+            points=[
+                PointStruct(
+                    id=self._note_id_to_point_id(note.id),  # Qdrant point ID (integer)
+                    vector=vector,                            # the embedding vector
+                    payload={"note_id": note.id},            # we store the UUID here so we can look it up later
                 )
-                search_results = response.points
-            elif hasattr(self.client, "search"):
-                search_results = self.client.search(
-                    collection_name=self.COLLECTION_NAME,
-                    query_vector=query_vector,
-                    limit=top_k,
-                    score_threshold=score_threshold,
-                )
-            else:
-                return []
+            ],
+        )
 
-            return [
-                res.payload["note_id"]
-                for res in search_results
-                if res.payload and "note_id" in res.payload and getattr(res, "score", 1.0) >= score_threshold
-            ]
-        except Exception as e:
-            print(f"[Warning] Qdrant vector search failed, falling back: {e}")
-            return []
+    def delete_note(self, note_id: str) -> None:
+        """Remove a note's embedding from Qdrant by its note ID."""
+        self.client.delete(
+            collection_name=self.collection,
+            points_selector=[self._note_id_to_point_id(note_id)],
+        )
 
+    def search(self, query: str, top_k: int = None) -> list[str]:
+        """
+        Search Qdrant for notes semantically similar to the query.
 
+        Steps:
+          1. Embed the query text into a vector
+          2. Ask Qdrant for the top_k most similar vectors
+          3. Return the note IDs from the matching payloads
 
+        The agent then uses these IDs to fetch full notes from SQLite.
+        """
+        top_k = top_k or config.TOP_K_SEMANTIC
+
+        # Embed the search query
+        query_vector = self.embedder.embed_query(query)
+
+        # Search for the nearest vectors in Qdrant
+        response = self.client.query_points(
+            collection_name=self.collection,
+            query=query_vector,
+            limit=top_k,
+        )
+
+        # Extract and return the note_id from each result's payload
+        return [
+            point.payload["note_id"]
+            for point in response.points
+            if point.payload and "note_id" in point.payload
+        ]

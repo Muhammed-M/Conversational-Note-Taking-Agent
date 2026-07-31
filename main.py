@@ -1,47 +1,51 @@
 """
-CLI Interactive Interface for Conversational Note-Taking Agent.
+main.py — CLI entry point for the Conversational Note-Taking Agent.
 
-Run this script to start an interactive terminal session with the agent.
+Run this file to start a chat session in your terminal:
+  python main.py
+
+Type your message and press Enter. Type 'exit' to quit.
 """
 
 import sys
-from dotenv import load_dotenv
-from graph import NoteAgentGraph
+from agent import Agent
 from state import create_initial_state
 from store import NoteStore
-from vector_store import VectorNoteStore
+from vector_store import VectorStore
 
 
 def print_banner():
     print("=" * 65)
-    print("      Conversational Note-Taking Agent — TechLabs London CLI")
+    print("      Conversational Note-Taking Agent")
     print("=" * 65)
-    print("  • Save notes  : 'Save a note about team standup on Tuesdays'")
-    print("  • Search notes: 'What did I write about standup?'")
-    print("  • Update notes: 'Update my standup note to Wednesdays'")
-    print("  • Delete notes: 'Delete the note about old office'")
-    print("  • Type 'exit' or 'quit' to terminate session.")
+    print("  Save  : 'Save a note about our standup meeting every Tuesday'")
+    print("  Search: 'What did I write about the standup?'")
+    print("  Update: 'Update my standup note to say Wednesdays'")
+    print("  Delete: 'Delete the standup note'")
+    print("  Quit  : type 'exit' or 'quit'")
     print("=" * 65 + "\n")
 
 
 def main():
-    # Load environment variables (.env)
-    load_dotenv()
+    # Set up the two storage layers
+    store = NoteStore(db_path="notes.db")       # SQLite: stores all note data
+    vector_store = VectorStore()                 # Qdrant: stores note embeddings for semantic search
 
-    # Initialize storage & graph services
-    store = NoteStore(db_path="notes.db")
-    vstore = VectorNoteStore(vector_dim=128)
-    graph = NoteAgentGraph(store=store, vector_store=vstore)
+    # Create the agent, wiring it to both stores
+    agent = Agent(store=store, vector_store=vector_store)
 
-
+    # Start with a clean blank state (empty memory, IDLE mode)
     state = create_initial_state()
 
     print_banner()
 
     while True:
         try:
-            mode_indicator = f"[{state.get('mode', 'IDLE')}] " if state.get("mode") != "IDLE" else ""
-            user_input = input(f"{mode_indicator}User: ").strip()
+            # Show the current mode if we're waiting for input (disambiguation or confirmation)
+            mode = state.get("mode", "IDLE")
+            prefix = f"[{mode}] " if mode != "IDLE" else ""
+
+            user_input = input(f"{prefix}You: ").strip()
 
             if not user_input:
                 continue
@@ -50,14 +54,14 @@ def main():
                 print("\nGoodbye!")
                 sys.exit(0)
 
-            # Step the LangGraph state machine
-            state = graph.run(user_input, state)
+            # Pass the message to the agent and get back the updated state
+            state = agent.run(user_input, state)
 
-            response = state.get("final_response", "")
-            print(f"\nAgent: {response}\n")
+            # Print the agent's response
+            print(f"\nAgent: {state.get('final_response', '')}\n")
 
         except (KeyboardInterrupt, EOFError):
-            print("\nSession interrupted. Exiting.")
+            print("\nSession interrupted. Goodbye!")
             sys.exit(0)
 
 

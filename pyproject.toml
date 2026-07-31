@@ -1,15 +1,23 @@
 [project]
 name = "techlabs-london"
 version = "0.1.0"
-description = "Add your description here"
+description = "Conversational Note-Taking Agent"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "google-generativeai>=0.8.6",
     "langchain>=1.3.14",
     "langchain-google-genai>=4.3.2",
-    "langgraph>=1.2.10",
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
     "qdrant-client>=1.18.0",
+]
+
+[tool.pytest.ini_options]
+# Add the project root to the Python path so tests can import modules like 'agent', 'store', etc.
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
 ]

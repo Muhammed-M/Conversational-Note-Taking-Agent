@@ -1,42 +1,64 @@
 """
-Unit tests for VectorNoteStore (Qdrant Vector Store integration).
+test_vector_store.py — Tests for VectorStore (Qdrant integration).
+
+These tests require a real GEMINI_API_KEY and QDRANT_URL to run.
+They are skipped automatically if the environment variables are not set.
+
+To run these tests: make sure your .env file has valid API keys.
 """
 
+import os
+import pytest
 from models import Note
-from vector_store import VectorNoteStore
+
+# Skip all tests in this file if GEMINI_API_KEY is not configured
+pytestmark = pytest.mark.skipif(
+    not os.getenv("GEMINI_API_KEY") or not os.getenv("QDRANT_URL"),
+    reason="GEMINI_API_KEY and QDRANT_URL required for vector store tests",
+)
 
 
 def test_vector_store_upsert_and_search():
-    vstore = VectorNoteStore(location=":memory:", vector_dim=128)
+    """
+    Save two notes with different topics, then verify semantic search
+    returns the correct note for each topic-specific query.
+    """
+    from vector_store import VectorStore
+    vstore = VectorStore()
 
-    note1 = Note(title="Python Async Asyncio", body="Tutorial on python asyncio and event loops", tags=["python"])
-    note2 = Note(title="Recipe for Pasta", body="Boil water add salt pasta tomato sauce", tags=["cooking"])
+    note1 = Note(title="Python Asyncio", body="Tutorial on python asyncio and event loops", tags=["python"])
+    note2 = Note(title="Pasta Recipe", body="Boil water, add salt, cook pasta with tomato sauce", tags=["cooking"])
 
-    assert vstore.upsert_note(note1) is True
-    assert vstore.upsert_note(note2) is True
+    vstore.upsert_note(note1)
+    vstore.upsert_note(note2)
 
-    # Search query relevant to Python
-    res_python = vstore.search("asyncio python loop")
-    assert len(res_python) > 0
-    assert res_python[0] == note1.id
+    results_python = vstore.search("asyncio event loop python")
+    assert len(results_python) > 0
+    assert results_python[0] == note1.id
 
-    # Search query relevant to Pasta
-    res_pasta = vstore.search("pasta tomato")
-    assert len(res_pasta) > 0
-    assert res_pasta[0] == note2.id
+    results_pasta = vstore.search("pasta tomato sauce recipe")
+    assert len(results_pasta) > 0
+    assert results_pasta[0] == note2.id
+
+    # Cleanup
+    vstore.delete_note(note1.id)
+    vstore.delete_note(note2.id)
 
 
 def test_vector_store_delete():
-    vstore = VectorNoteStore(location=":memory:", vector_dim=128)
+    """
+    Save a note, verify it's searchable, delete it, verify it's gone.
+    """
+    from vector_store import VectorStore
+    vstore = VectorStore()
 
-    note = Note(title="Temporary Note", body="To be deleted vector")
+    note = Note(title="Temporary Note", body="This note will be deleted from Qdrant")
     vstore.upsert_note(note)
 
-    res_before = vstore.search("Temporary Note")
-    assert len(res_before) == 1
-    assert res_before[0] == note.id
+    results_before = vstore.search("temporary note delete qdrant")
+    assert note.id in results_before
 
-    assert vstore.delete_note(note.id) is True
+    vstore.delete_note(note.id)
 
-    res_after = vstore.search("Temporary Note")
-    assert len(res_after) == 0
+    results_after = vstore.search("temporary note delete qdrant")
+    assert note.id not in results_after
